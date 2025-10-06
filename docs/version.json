@@ -1,0 +1,8 @@
+{
+  "platform": "android",
+  "versionCode": 1,
+  "versionName": "1.0.0",
+  "url": "https://github.com/UWISMari/UWISViewer_apk/releases/tag/v1.0.0",
+  "sha256": "9561774DFCD74D4B5CD3963F200FF9BCED0CFE730DECF0AD1522DF39E267DF95",
+  "releaseNotes": "Ensimmäinen julkaisu."
+}
