@@ -3,6 +3,7 @@ name: Make SHA256 + latest.json (for hand-uploaded UWISViewer.apk)
 on:
   release:
     types: [published, edited]
+  workflow_dispatch: {}   # mahdollistaa "Run workflow" -napin
 
 jobs:
   make_manifest:
@@ -11,33 +12,39 @@ jobs:
       contents: write
 
     steps:
-      - name: Find UWISViewer.apk on this release
-        id: find
+      - name: Determine release (from event or latest)
+        id: rel
         uses: actions/github-script@v7
         with:
           script: |
-            const rel = context.payload.release
-            if (!rel) core.setFailed('No release payload.')
-            const apk = rel.assets.find(a => a.name === 'UWISViewer.apk')
-            if (!apk) core.setFailed('Asset UWISViewer.apk not found. Upload it, then Update the release.')
-            core.setOutput('apk_url', apk.browser_download_url)
-            core.setOutput('tag', rel.tag_name)
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            // 1) Tapahtumasta:
+            let rel = context.payload && context.payload.release ? context.payload.release : null;
+            // 2) Manuaaliajossa hae "latest":
+            if (!rel) {
+              const { data } = await github.rest.repos.getLatestRelease({ owner, repo });
+              rel = data;
+            }
+            if (!rel) core.setFailed('No release found.');
+            // Etsi UWISViewer.apk
+            const apk = rel.assets.find(a => a.name === 'UWISViewer.apk');
+            if (!apk) core.setFailed('Asset UWISViewer.apk not found on the target release.');
+            core.setOutput('apk_url', apk.browser_download_url);
+            core.setOutput('tag', rel.tag_name);
+            core.setOutput('release_id', rel.id);
 
-            // Remove old normalized assets to avoid duplicates
+            // Poista vanhat normalisoidut, jos ovat olemassa
             for (const a of rel.assets) {
               if (['UWISViewer.apk.sha256','latest.json'].includes(a.name)) {
-                await github.rest.repos.deleteReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  asset_id: a.id,
-                })
+                await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: a.id });
               }
             }
 
       - name: Download APK
         run: |
           mkdir -p dist
-          curl -L "${{ steps.find.outputs.apk_url }}" -o dist/UWISViewer.apk
+          curl -L "${{ steps.rel.outputs.apk_url }}" -o dist/UWISViewer.apk
 
       - name: Compute SHA-256
         run: |
@@ -50,7 +57,7 @@ jobs:
 
       - name: Build latest.json (versionCode = 100*MA + 10*MI + PA)
         run: |
-          TAG="${{ steps.find.outputs.tag }}"   # e.g. v1.2.3
+          TAG="${{ steps.rel.outputs.tag }}"   # esim. v1.2.3
           VERSION_NAME="${TAG#v}"               # 1.2.3
           IFS='.' read -r MA MI PA <<EOF
           $VERSION_NAME
@@ -71,7 +78,7 @@ jobs:
       - name: Upload assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.find.outputs.tag }}
+          tag_name: ${{ steps.rel.outputs.tag }}
           files: |
             dist/UWISViewer.apk.sha256
             dist/latest.json
