@@ -1,0 +1,77 @@
+name: Make SHA256 + latest.json (for hand-uploaded UWISViewer.apk)
+
+on:
+  release:
+    types: [published, edited]
+
+jobs:
+  make_manifest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Find UWISViewer.apk on this release
+        id: find
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const rel = context.payload.release
+            if (!rel) core.setFailed('No release payload.')
+            const apk = rel.assets.find(a => a.name === 'UWISViewer.apk')
+            if (!apk) core.setFailed('Asset UWISViewer.apk not found. Upload it, then Update the release.')
+            core.setOutput('apk_url', apk.browser_download_url)
+            core.setOutput('tag', rel.tag_name)
+
+            // Remove old normalized assets to avoid duplicates
+            for (const a of rel.assets) {
+              if (['UWISViewer.apk.sha256','latest.json'].includes(a.name)) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: a.id,
+                })
+              }
+            }
+
+      - name: Download APK
+        run: |
+          mkdir -p dist
+          curl -L "${{ steps.find.outputs.apk_url }}" -o dist/UWISViewer.apk
+
+      - name: Compute SHA-256
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum UWISViewer.apk > UWISViewer.apk.sha256
+          else
+            shasum -a 256 UWISViewer.apk | awk '{print $1"  UWISViewer.apk"}' > UWISViewer.apk.sha256
+          fi
+
+      - name: Build latest.json (versionCode = 100*MA + 10*MI + PA)
+        run: |
+          TAG="${{ steps.find.outputs.tag }}"   # e.g. v1.2.3
+          VERSION_NAME="${TAG#v}"               # 1.2.3
+          IFS='.' read -r MA MI PA <<EOF
+          $VERSION_NAME
+          EOF
+          MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
+          VERSION_CODE=$(( 100*MA + 10*MI + PA ))
+          SHA=$(awk '{print $1}' dist/UWISViewer.apk.sha256)
+          REPO="${{ github.repository }}"
+          cat > dist/latest.json <<JSON
+          {
+            "latestVersionCode": ${VERSION_CODE},
+            "latestVersionName": "${VERSION_NAME}",
+            "apkUrl": "https://github.com/${REPO}/releases/latest/download/UWISViewer.apk",
+            "apkSha256": "${SHA}"
+          }
+          JSON
+
+      - name: Upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.find.outputs.tag }}
+          files: |
+            dist/UWISViewer.apk.sha256
+            dist/latest.json
